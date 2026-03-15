@@ -3,39 +3,47 @@ from http.server import BaseHTTPRequestHandler
 import json
 import urllib.parse
 
-HEADERS = {
-    "Content-Type": "application/json",
-    "User-Agent": "com.google.android.youtube/19.09.37 (Linux; U; Android 11) gzip",
-    "X-YouTube-Client-Name": "3",
-    "X-YouTube-Client-Version": "19.09.37",
-}
+CLIENTS = [
+    {
+        "name": "ANDROID_VR",
+        "version": "1.65.10",
+        "id": "28",
+        "ua": "com.google.android.apps.youtube.vr.oculus/1.65.10 (Linux; U; Android 12L; en_US; Quest 3; Build/SQ3A.220605.009.A1; Cronet/132.0.6808.3)",
+        "extra": {"osName": "Android", "osVersion": "12L", "deviceMake": "Oculus", "deviceModel": "Quest 3", "androidSdkVersion": "32"}
+    },
+    {
+        "name": "ANDROID",
+        "version": "19.09.37",
+        "id": "3",
+        "ua": "com.google.android.youtube/19.09.37 (Linux; U; Android 11) gzip",
+        "extra": {"osName": "Android", "osVersion": "11", "androidSdkVersion": "30"}
+    },
+    {
+        "name": "ANDROID_TESTSUITE",
+        "version": "1.9.38.43",
+        "id": "30",
+        "ua": "com.google.android.youtube/1.9.38.43 (Linux; U; Android 11) gzip",
+        "extra": {"osName": "Android", "osVersion": "11", "androidSdkVersion": "30"}
+    },
+]
 
-def get_stream(video_id):
-    body = {
-        "context": {
-            "client": {
-                "clientName": "ANDROID",
-                "clientVersion": "19.09.37",
-                "androidSdkVersion": 30,
-                "hl": "en",
-                "gl": "US"
-            }
-        },
-        "videoId": video_id,
-        "contentCheckOk": True,
-        "racyCheckOk": True
+def try_client(video_id, client):
+    ctx = {"clientName": client["name"], "clientVersion": client["version"], "hl": "en", "gl": "US"}
+    ctx.update(client["extra"])
+    body = {"context": {"client": ctx}, "videoId": video_id, "contentCheckOk": True, "racyCheckOk": True}
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": client["ua"],
+        "X-YouTube-Client-Name": client["id"],
+        "X-YouTube-Client-Version": client["version"],
     }
     r = requests.post(
         "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
-        headers=HEADERS,
-        json=body,
-        timeout=20
+        headers=headers, json=body, timeout=15
     )
     data = r.json()
-    status = data.get("playabilityStatus", {}).get("status", "UNKNOWN")
-    if status != "OK":
-        return None, f"playability={status}"
-
+    if data.get("playabilityStatus", {}).get("status") != "OK":
+        return None
     sd = data.get("streamingData", {})
     formats = sd.get("adaptiveFormats", []) + sd.get("formats", [])
     audio = [f for f in formats
@@ -43,14 +51,22 @@ def get_stream(video_id):
              and f.get("url")
              and not f.get("signatureCipher")
              and not f.get("cipher")]
-
     if not audio:
-        return None, "no direct audio"
-
+        return None
     best = next((f for f in audio if f.get("itag") == 140), None)
     if not best:
         best = max(audio, key=lambda f: f.get("bitrate", 0))
-    return best["url"], None
+    return best.get("url")
+
+def get_stream(video_id):
+    for client in CLIENTS:
+        try:
+            url = try_client(video_id, client)
+            if url:
+                return url, None
+        except Exception as e:
+            continue
+    return None, "all clients failed"
 
 
 class handler(BaseHTTPRequestHandler):
