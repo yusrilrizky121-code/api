@@ -82,7 +82,7 @@ class handler(BaseHTTPRequestHandler):
             try:
                 url, err = get_stream(video_id)
                 if url:
-                    self._json(200, {"status": "success", "url": url})
+                    self._json(200, {"status": "success", "url": url, "userAgent": CLIENTS[0]["ua"]})
                 else:
                     self._json(200, {"status": "error", "message": err})
             except Exception as e:
